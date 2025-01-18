@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from diffusers import StableDiffusionXLPipeline
 from diffusers.image_processor import PipelineImageInput
-from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import\
+from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img import \
     rescale_noise_cfg, retrieve_latents, retrieve_timesteps
 from diffusers.utils import BaseOutput, deprecate
 from diffusers.utils.torch_utils import randn_tensor
@@ -15,7 +15,6 @@ import torch
 from ..utils import *
 from ..utils.sdxl import *
 
-
 BATCH_ORDER = [
     "structure_uncond", "appearance_uncond", "uncond", "structure_cond", "appearance_cond", "cond",
 ]
@@ -24,7 +23,7 @@ BATCH_ORDER = [
 def get_last_control_i(control_schedule, num_inference_steps):
     if control_schedule is None:
         return num_inference_steps, num_inference_steps
-    
+
     def max_(l):
         if len(l) == 0:
             return 0.0
@@ -54,8 +53,8 @@ class CtrlXStableDiffusionXLPipelineOutput(BaseOutput):
 class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0.28.0
 
     def prepare_latents(
-        self, image, batch_size, num_images_per_prompt, num_channels_latents, height, width,
-        dtype, device, generator=None, noise=None,
+            self, image, batch_size, num_images_per_prompt, num_channels_latents, height, width,
+            dtype, device, generator=None, noise=None,
     ):
         batch_size = batch_size * num_images_per_prompt
 
@@ -102,7 +101,7 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                 )
             elif isinstance(generator, list):
                 init_latents = [
-                    retrieve_latents(self.vae.encode(image[i : i + 1]), generator=generator[i])
+                    retrieve_latents(self.vae.encode(image[i: i + 1]), generator=generator[i])
                     for i in range(batch_size)
                 ]
                 init_latents = torch.cat(init_latents, dim=0)
@@ -136,55 +135,71 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
     def appearance_guidance_scale(self):
         return self._guidance_scale if self._appearance_guidance_scale is None else self._appearance_guidance_scale
 
+    def choose_object_indexes(self, prompt, objects:list=None, object_to_edit=None):
+        """Extracts token indexes only for user-defined objects."""
+        prompt_inputs = self.tokenizer(prompt, padding="max_length", max_length=self.tokenizer.model_max_length, truncation=True, return_tensors="pt").input_ids
+        if object_to_edit is not None:
+            obj_inputs = self.tokenizer(object_to_edit, add_special_tokens=False).input_ids
+            obj_idx = torch.cat([torch.where(prompt_inputs == o)[1] for o in obj_inputs])
+            if object_to_edit in objects: objects.remove(object_to_edit)
+        other_idx = []
+        for o in objects:
+            inps = self.tokenizer(o, add_special_tokens=False).input_ids
+            other_idx.append(torch.cat([torch.where(prompt_inputs == o)[1] for o in inps]))
+        if object_to_edit is None: return torch.cat(other_idx)
+        else: return obj_idx, torch.cat(other_idx)
+
     @torch.no_grad()
     def __call__(
-        self,
-        prompt: Union[str, List[str]] = None,  # TODO: Support prompt_2 and negative_prompt_2
-        structure_prompt: Optional[Union[str, List[str]]] = None,
-        appearance_prompt: Optional[Union[str, List[str]]] = None,
-        structure_image: Optional[PipelineImageInput] = None,
-        appearance_image: Optional[PipelineImageInput] = None,
-        num_inference_steps: int = 50,
-        timesteps: List[int] = None,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        positive_prompt: Optional[Union[str, List[str]]] = None,
-        height: Optional[int] = None,
-        width: Optional[int] = None,
-        guidance_scale: float = 5.0,
-        structure_guidance_scale: Optional[float] = None,
-        appearance_guidance_scale: Optional[float] = None,
-        num_images_per_prompt: Optional[int] = 1,
-        eta: float = 0.0,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.Tensor] = None,
-        structure_latents: Optional[torch.Tensor] = None,
-        appearance_latents: Optional[torch.Tensor] = None,
-        prompt_embeds: Optional[torch.Tensor] = None,  # Positive prompt is concatenated with prompt, so no embeddings
-        structure_prompt_embeds: Optional[torch.Tensor] = None,
-        appearance_prompt_embeds: Optional[torch.Tensor] = None,
-        negative_prompt_embeds: Optional[torch.Tensor] = None,
-        pooled_prompt_embeds: Optional[torch.Tensor] = None,
-        structure_pooled_prompt_embeds: Optional[torch.Tensor] = None,
-        appearance_pooled_prompt_embeds: Optional[torch.Tensor] = None,
-        negative_pooled_prompt_embeds: Optional[torch.Tensor] = None,
-        control_schedule: Optional[Dict] = None,
-        self_recurrence_schedule: Optional[List[int]] = [],  # Format: [(start, end, num_repeat)]
-        decode_structure: Optional[bool] = True,
-        decode_appearance: Optional[bool] = True,
-        output_type: Optional[str] = "pil",
-        return_dict: bool = True,
-        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        guidance_rescale: float = 0.0,
-        original_size: Tuple[int, int] = None,
-        crops_coords_top_left: Tuple[int, int] = (0, 0),
-        target_size: Tuple[int, int] = None,
-        clip_skip: Optional[int] = None,
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
-        **kwargs,
+            self,
+            prompt: Union[str, List[str]] = None,  # TODO: Support prompt_2 and negative_prompt_2
+            structure_prompt: Optional[Union[str, List[str]]] = None,
+            appearance_prompt: Optional[Union[str, List[str]]] = None,
+            structure_image: Optional[PipelineImageInput] = None,
+            appearance_image: Optional[PipelineImageInput] = None,
+            num_inference_steps: int = 50,
+            timesteps: List[int] = None,
+            negative_prompt: Optional[Union[str, List[str]]] = None,
+            positive_prompt: Optional[Union[str, List[str]]] = None,
+            height: Optional[int] = None,
+            width: Optional[int] = None,
+            guidance_scale: float = 5.0,
+            structure_guidance_scale: Optional[float] = None,
+            appearance_guidance_scale: Optional[float] = None,
+            num_images_per_prompt: Optional[int] = 1,
+            eta: float = 0.0,
+            generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+            latents: Optional[torch.Tensor] = None,
+            structure_latents: Optional[torch.Tensor] = None,
+            appearance_latents: Optional[torch.Tensor] = None,
+            prompt_embeds: Optional[torch.Tensor] = None,
+            # Positive prompt is concatenated with prompt, so no embeddings
+            structure_prompt_embeds: Optional[torch.Tensor] = None,
+            appearance_prompt_embeds: Optional[torch.Tensor] = None,
+            negative_prompt_embeds: Optional[torch.Tensor] = None,
+            pooled_prompt_embeds: Optional[torch.Tensor] = None,
+            structure_pooled_prompt_embeds: Optional[torch.Tensor] = None,
+            appearance_pooled_prompt_embeds: Optional[torch.Tensor] = None,
+            negative_pooled_prompt_embeds: Optional[torch.Tensor] = None,
+            control_schedule: Optional[Dict] = None,
+            self_recurrence_schedule: Optional[List[int]] = [],  # Format: [(start, end, num_repeat)]
+            decode_structure: Optional[bool] = True,
+            decode_appearance: Optional[bool] = True,
+            output_type: Optional[str] = "pil",
+            return_dict: bool = True,
+            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+            guidance_rescale: float = 0.0,
+            original_size: Tuple[int, int] = None,
+            crops_coords_top_left: Tuple[int, int] = (0, 0),
+            target_size: Tuple[int, int] = None,
+            clip_skip: Optional[int] = None,
+            callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
+            callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+            objects=None,
+            **kwargs,
     ):
         # TODO: Add function argument documentation
-        
+
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
 
@@ -214,13 +229,13 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
             height,
             width,
             callback_steps,
-            negative_prompt = negative_prompt,
-            negative_prompt_2 = None,  # negative_prompt_2
-            prompt_embeds = prompt_embeds,
-            negative_prompt_embeds = negative_prompt_embeds,
-            pooled_prompt_embeds = pooled_prompt_embeds,
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds,
-            callback_on_step_end_tensor_inputs = callback_on_step_end_tensor_inputs,
+            negative_prompt=negative_prompt,
+            negative_prompt_2=None,  # negative_prompt_2
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
         )
 
         self._guidance_scale = guidance_scale
@@ -253,12 +268,15 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
         text_encoder_lora_scale = (
             self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
-        
+
         if positive_prompt is not None and positive_prompt != "":
             prompt = prompt + ", " + positive_prompt  # Add positive prompt with comma
             # By default, only add positive prompt to the appearance prompt and not the structure prompt
             if appearance_prompt is not None and appearance_prompt != "":
                 appearance_prompt = appearance_prompt + ", " + positive_prompt
+
+        self.object_indexes = None
+        # self.object_indexes = self.choose_object_indexes(prompt, objects=objects)
 
         (
             prompt_embeds_,
@@ -266,23 +284,23 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
             pooled_prompt_embeds_,
             negative_pooled_prompt_embeds,
         ) = self.encode_prompt(
-            prompt = prompt,
-            prompt_2 = None,  # prompt_2
-            device = device,
-            num_images_per_prompt = num_images_per_prompt,
-            do_classifier_free_guidance = True,  # self.do_classifier_free_guidance, TODO: Support no CFG
-            negative_prompt = negative_prompt,
-            negative_prompt_2 = None,  # negative_prompt_2
-            prompt_embeds = prompt_embeds,
-            negative_prompt_embeds = negative_prompt_embeds,
-            pooled_prompt_embeds = pooled_prompt_embeds,
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds,
-            lora_scale = text_encoder_lora_scale,
-            clip_skip = self.clip_skip,
+            prompt=prompt,
+            prompt_2=None,  # prompt_2
+            device=device,
+            num_images_per_prompt=num_images_per_prompt,
+            do_classifier_free_guidance=True,  # self.do_classifier_free_guidance, TODO: Support no CFG
+            negative_prompt=negative_prompt,
+            negative_prompt_2=None,  # negative_prompt_2
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            lora_scale=text_encoder_lora_scale,
+            clip_skip=self.clip_skip,
         )
         prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds_], dim=0).to(device)
         add_text_embeds = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds_], dim=0).to(device)
-        
+
         # 3.1. Structure prompt embeddings
         if structure_prompt is not None and structure_prompt != "":
             (
@@ -291,19 +309,19 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                 structure_pooled_prompt_embeds,
                 negative_structure_pooled_prompt_embeds,
             ) = self.encode_prompt(
-                prompt = structure_prompt,
-                prompt_2 = None,  # prompt_2
-                device = device,
-                num_images_per_prompt = num_images_per_prompt,
-                do_classifier_free_guidance = True,  # self.do_classifier_free_guidance, TODO: Support no CFG
-                negative_prompt = negative_prompt if structure_image is None else "",
-                negative_prompt_2 = None,  # negative_prompt_2
-                prompt_embeds = structure_prompt_embeds,
-                negative_prompt_embeds = None,  # negative_prompt_embeds
-                pooled_prompt_embeds = structure_pooled_prompt_embeds,
-                negative_pooled_prompt_embeds = None,  # negative_pooled_prompt_embeds
-                lora_scale = text_encoder_lora_scale,
-                clip_skip = self.clip_skip,
+                prompt=structure_prompt,
+                prompt_2=None,  # prompt_2
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                do_classifier_free_guidance=True,  # self.do_classifier_free_guidance, TODO: Support no CFG
+                negative_prompt=negative_prompt if structure_image is None else "",
+                negative_prompt_2=None,  # negative_prompt_2
+                prompt_embeds=structure_prompt_embeds,
+                negative_prompt_embeds=None,  # negative_prompt_embeds
+                pooled_prompt_embeds=structure_pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=None,  # negative_pooled_prompt_embeds
+                lora_scale=text_encoder_lora_scale,
+                clip_skip=self.clip_skip,
             )
             structure_prompt_embeds = torch.cat(
                 [negative_structure_prompt_embeds, structure_prompt_embeds], dim=0
@@ -323,19 +341,19 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                 appearance_pooled_prompt_embeds,
                 negative_appearance_pooled_prompt_embeds,
             ) = self.encode_prompt(
-                prompt = appearance_prompt,
-                prompt_2 = None,  # prompt_2
-                device = device,
-                num_images_per_prompt = num_images_per_prompt,
-                do_classifier_free_guidance = True,  # self.do_classifier_free_guidance, TODO: Support no CFG
-                negative_prompt = negative_prompt if appearance_image is None else "",
-                negative_prompt_2 = None,  # negative_prompt_2
-                prompt_embeds = appearance_prompt_embeds,
-                negative_prompt_embeds = None,  # negative_prompt_embeds
-                pooled_prompt_embeds = appearance_pooled_prompt_embeds,  # pooled_prompt_embeds
-                negative_pooled_prompt_embeds = None,  # negative_pooled_prompt_embeds
-                lora_scale = text_encoder_lora_scale,
-                clip_skip = self.clip_skip,
+                prompt=appearance_prompt,
+                prompt_2=None,  # prompt_2
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                do_classifier_free_guidance=True,  # self.do_classifier_free_guidance, TODO: Support no CFG
+                negative_prompt=negative_prompt if appearance_image is None else "",
+                negative_prompt_2=None,  # negative_prompt_2
+                prompt_embeds=appearance_prompt_embeds,
+                negative_prompt_embeds=None,  # negative_prompt_embeds
+                pooled_prompt_embeds=appearance_pooled_prompt_embeds,  # pooled_prompt_embeds
+                negative_pooled_prompt_embeds=None,  # negative_pooled_prompt_embeds
+                lora_scale=text_encoder_lora_scale,
+                clip_skip=self.clip_skip,
             )
             appearance_prompt_embeds = torch.cat(
                 [negative_appearance_prompt_embeds, appearance_prompt_embeds], dim=0
@@ -346,7 +364,7 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
         else:
             appearance_prompt_embeds = prompt_embeds
             appearance_add_text_embeds = add_text_embeds
-        
+
         # 3.3. Prepare added time ids & embeddings, TODO: Support no CFG
         if self.text_encoder_2 is None:
             text_encoder_projection_dim = int(pooled_prompt_embeds.shape[-1])
@@ -357,8 +375,8 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
             original_size,
             crops_coords_top_left,
             target_size,
-            dtype = prompt_embeds.dtype,
-            text_encoder_projection_dim = text_encoder_projection_dim,
+            dtype=prompt_embeds.dtype,
+            text_encoder_projection_dim=text_encoder_projection_dim,
         )
         negative_add_time_ids = add_time_ids
         add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0).to(device)
@@ -397,7 +415,7 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
         else:
             clean_appearance_latents = None
         appearance_latents = latents if appearance_latents is None else appearance_latents
-        
+
         # 6. Prepare extra step kwargs
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
@@ -409,11 +427,11 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
             return isinstance(self.denoising_end, float) and 0 < dnv < 1
 
         if (
-            self.denoising_end is not None
-            and self.denoising_start is not None
-            and denoising_value_valid(self.denoising_end)
-            and denoising_value_valid(self.denoising_start)
-            and self.denoising_start >= self.denoising_end
+                self.denoising_end is not None
+                and self.denoising_start is not None
+                and denoising_value_valid(self.denoising_end)
+                and denoising_value_valid(self.denoising_start)
+                and self.denoising_start >= self.denoising_end
         ):
             raise ValueError(
                 f"`denoising_start`: {self.denoising_start} cannot be larger than or equal to `denoising_end`: "
@@ -460,9 +478,9 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                 if i == appearance_control_stop_i:
                     if "appearance_uncond" not in batch_order:
                         batch_order.remove("appearance_cond")
-                
+
                 register_attr(self, t=t.item(), do_control=True, batch_order=batch_order)
-                
+
                 # TODO: For now, assume we are doing classifier-free guidance, support no CF-guidance later
                 latent_model_input = self.scheduler.scale_model_input(latents, t)
                 structure_latent_model_input = self.scheduler.scale_model_input(structure_latents, t)
@@ -512,28 +530,30 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                 concat_noise_pred = self.unet(
                     concat_latent_model_input,
                     t,
-                    encoder_hidden_states = concat_prompt_embeds,
-                    timestep_cond = timestep_cond,
-                    cross_attention_kwargs = self.cross_attention_kwargs,
-                    added_cond_kwargs = added_cond_kwargs,
+                    encoder_hidden_states=concat_prompt_embeds,
+                    timestep_cond=timestep_cond,
+                    cross_attention_kwargs=self.cross_attention_kwargs,
+                    added_cond_kwargs=added_cond_kwargs,
                 ).sample
                 all_noise_pred = batch_tensor_to_dict(concat_noise_pred, batch_order)
 
                 # Classifier-free guidance, TODO: Support no CFG
-                noise_pred = all_noise_pred["uncond"] +\
-                    self.guidance_scale * (all_noise_pred["cond"] - all_noise_pred["uncond"])
-                
-                structure_noise_pred = all_noise_pred["structure_cond"]\
+                noise_pred = all_noise_pred["uncond"] + \
+                             self.guidance_scale * (all_noise_pred["cond"] - all_noise_pred["uncond"])
+
+                structure_noise_pred = all_noise_pred["structure_cond"] \
                     if "structure_cond" in batch_order else noise_pred
                 if "structure_uncond" in all_noise_pred:
-                    structure_noise_pred = all_noise_pred["structure_uncond"] +\
-                        self.structure_guidance_scale * (structure_noise_pred - all_noise_pred["structure_uncond"])
-                
-                appearance_noise_pred = all_noise_pred["appearance_cond"]\
+                    structure_noise_pred = all_noise_pred["structure_uncond"] + \
+                                           self.structure_guidance_scale * (
+                                                       structure_noise_pred - all_noise_pred["structure_uncond"])
+
+                appearance_noise_pred = all_noise_pred["appearance_cond"] \
                     if "appearance_cond" in batch_order else noise_pred
                 if "appearance_uncond" in all_noise_pred:
-                    appearance_noise_pred = all_noise_pred["appearance_uncond"] +\
-                        self.appearance_guidance_scale * (appearance_noise_pred - all_noise_pred["appearance_uncond"])
+                    appearance_noise_pred = all_noise_pred["appearance_uncond"] + \
+                                            self.appearance_guidance_scale * (
+                                                        appearance_noise_pred - all_noise_pred["appearance_uncond"])
 
                 if self.guidance_rescale > 0.0:
                     noise_pred = rescale_noise_cfg(
@@ -549,7 +569,7 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                             appearance_noise_pred, all_noise_pred["appearance_cond"],
                             guidance_rescale=self.guidance_rescale
                         )
-                
+
                 # Compute the previous noisy sample x_t -> x_t-1
                 concat_noise_pred = torch.cat(
                     [structure_noise_pred, appearance_noise_pred, noise_pred], dim=0,
@@ -565,35 +585,35 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
                     structure_latents = noise_prev(self.scheduler, t, clean_structure_latents)
                 if clean_appearance_latents is not None:
                     appearance_latents = noise_prev(self.scheduler, t, clean_appearance_latents)
-                
+
                 # Self-recurrence
                 for _ in range(self_recurrence_schedule[i]):
                     if hasattr(self.scheduler, "_step_index"):  # For fancier schedulers
                         self.scheduler._step_index -= 1  # TODO: Does this actually work?
-                    
+
                     t_prev = 0 if i + 1 >= num_inference_steps else timesteps[i + 1]
                     latents = noise_t2t(self.scheduler, t_prev, t, latents)
                     latent_model_input = torch.cat([latents] * 2)
-                    
+
                     register_attr(self, t=t.item(), do_control=False, batch_order=["uncond", "cond"])
-                    
+
                     # Predict the noise residual
                     added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
                     noise_pred_uncond, noise_pred_ = self.unet(
                         latent_model_input,
                         t,
-                        encoder_hidden_states = prompt_embeds,
-                        timestep_cond = timestep_cond,
-                        cross_attention_kwargs = self.cross_attention_kwargs,
-                        added_cond_kwargs = added_cond_kwargs,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
                     ).sample.chunk(2)
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_ - noise_pred_uncond)
-                
+
                     if self.guidance_rescale > 0.0:
                         noise_pred = rescale_noise_cfg(noise_pred, noise_pred_, guidance_rescale=self.guidance_rescale)
-                    
+
                     latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
-                
+
                 # Callbacks
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -622,7 +642,7 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
             structure_latents = clean_structure_latents
         if clean_appearance_latents is not None:
             appearance_latents = clean_appearance_latents
-                        
+
         # For passing important information onto the refiner
         self.refiner_args = {"latents": latents.detach(), "prompt": prompt, "negative_prompt": negative_prompt}
 
@@ -664,3 +684,4 @@ class CtrlXStableDiffusionXLPipeline(StableDiffusionXLPipeline):  # diffusers==0
             return (image, structure, appearance)
 
         return CtrlXStableDiffusionXLPipelineOutput(images=image, structures=structure, appearances=appearance)
+ 

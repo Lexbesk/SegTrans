@@ -1,9 +1,12 @@
 import random
 from os import environ
+import os
 
 import numpy as np
 import torch
-
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+from PIL import Image
 
 JPEG_QUALITY = 100
 
@@ -61,16 +64,16 @@ def noise_prev(scheduler, timestep, x_0, noise=None):
         raise ValueError(
             "Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler"
         )
-        
+
     if noise is None:
         noise = torch.randn_like(x_0).to(x_0)
-        
+
     # From DDIMScheduler step function (hopefully this works)
     timestep_i = (scheduler.timesteps == timestep).nonzero(as_tuple=True)[0][0].item()
     if timestep_i + 1 >= scheduler.timesteps.shape[0]:  # We are at t = 0 (ish)
         return x_0
     prev_timestep = scheduler.timesteps[timestep_i + 1:timestep_i + 2]  # Make sure t is not 0-dim
-    
+
     x_t_prev = scheduler.add_noise(x_0, noise, prev_timestep)
     return x_t_prev
 
@@ -79,23 +82,48 @@ def noise_t2t(scheduler, timestep, timestep_target, x_t, noise=None):
     assert timestep_target >= timestep
     if noise is None:
         noise = torch.randn_like(x_t).to(x_t)
-        
+
     alphas_cumprod = scheduler.alphas_cumprod.to(device=x_t.device, dtype=x_t.dtype)
-    
+
     timestep = timestep.to(torch.long)
     timestep_target = timestep_target.to(torch.long)
-    
+
     alpha_prod_t = alphas_cumprod[timestep]
     alpha_prod_tt = alphas_cumprod[timestep_target]
     alpha_prod = alpha_prod_tt / alpha_prod_t
-    
+
     sqrt_alpha_prod = (alpha_prod ** 0.5).flatten()
     while len(sqrt_alpha_prod.shape) < len(x_t.shape):
         sqrt_alpha_prod = sqrt_alpha_prod.unsqueeze(-1)
-    
+
     sqrt_one_minus_alpha_prod = ((1 - alpha_prod) ** 0.5).flatten()
     while len(sqrt_one_minus_alpha_prod.shape) < len(x_t.shape):
         sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
 
     x_tt = sqrt_alpha_prod * x_t + sqrt_one_minus_alpha_prod * noise
     return x_tt
+
+
+@torch.no_grad()
+def visualize_grid_to_grid(att_map, filename, alpha=0.6):
+    # att_map: [grid_size^2], image: [H, W, 3], H=W
+    grid_size = int(np.sqrt(att_map.shape[0]))
+    mask = att_map.reshape(grid_size, grid_size)
+
+    outmap_min = torch.min(mask)
+    outmap_max = torch.max(mask)
+    mask = ((mask - outmap_min) / (outmap_max - outmap_min))
+    mask = (mask * 255).int()
+    mask = mask.cpu().numpy()
+    # mask = Image.fromarray(mask).resize((image_size, image_size))
+    plt.clf()
+    fig = plt.figure(figsize=(5, 7))
+    fig.tight_layout()
+    # print(grid_image, mask)
+    # print('imshow begin')
+    # plt.imshow(grid_image)
+
+    plt.imshow(mask / np.max(mask), alpha=alpha, cmap='rainbow')
+    plt.axis('off')
+    fig.figure.savefig('./attn_results/' + ('{}.jpg'.format(filename)), bbox_inches='tight', pad_inches=0, dpi=800)
+    plt.close('all')
