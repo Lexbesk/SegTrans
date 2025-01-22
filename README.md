@@ -39,7 +39,7 @@ For installation problems, please visit [`SAM2`](https://github.com/facebookrese
 
 To set up the environment, please run the following.
 ```
-pip install diffusers==0.20.0
+pip install diffusers==0.28.0
 ```
 
 ### Running SegTrans
