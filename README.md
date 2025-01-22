@@ -2,7 +2,7 @@
 
 
 
-![Ctrl-X teaser figure](docs/assets/seg1.pdf)
+![Ctrl-X teaser figure](docs/assets/seg1.png)
 
 ![Ctrl-X teaser figure](docs/assets/seg2.pdf)
 
