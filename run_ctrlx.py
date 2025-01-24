@@ -15,25 +15,6 @@ from ctrl_x.pipelines.pipeline_sdxl import CtrlXStableDiffusionXLPipeline
 from ctrl_x.utils import *
 from ctrl_x.utils.sdxl import *
 
-# import os
-# import cv2
-# import json
-# import numpy as np
-# import supervision as sv
-# import pycocotools.mask as mask_util
-# from pathlib import Path
-# from torchvision.ops import box_convert
-# from GroundedSAM2.sam2.build_sam import build_sam2
-# from GroundedSAM2.sam2.sam2_image_predictor import SAM2ImagePredictor
-# from GroundedSAM2.grounding_dino.groundingdino.util.inference import load_model, predict
-
-# import GroundedSAM2.grounding_dino.groundingdino.datasets.transforms as T
-# from GroundedSAM2.grounding_dino.groundingdino.models import build_model
-# from GroundedSAM2.grounding_dino.groundingdino.util.misc import clean_state_dict
-# from GroundedSAM2.grounding_dino.groundingdino.util.slconfig import SLConfig
-# from GroundedSAM2.grounding_dino.groundingdino.util.utils import get_phrases_from_posmap
-# from PIL import Image
-# import sys
 
 
 def sam_load_image(image_path: str) -> Tuple[np.array, torch.Tensor]:

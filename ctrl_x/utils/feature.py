@@ -34,7 +34,7 @@ def normalize(x, dim):
 
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
-        is_causal=False, scale=None, enable_gqa=False, attention_map=False, cross_maps=None):
+        is_causal=False, scale=None, enable_gqa=False, attention_map=False, cross_maps=None, resolution=None):
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
@@ -57,7 +57,8 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     attn_weight = query @ key.transpose(-2, -1) * scale_factor
     # print(attn_weight.shape, scale_factor)
     # print(attn_weight)
-    resolution = attn_weight.shape[-1]
+    if resolution is None:
+        resolution = query.shape[-2]
     cross_map = cross_maps[resolution]
     attn_weight += cross_map
     attn_weight += attn_bias
@@ -77,6 +78,34 @@ def appearance_mean_std(q_c_normed, k_s_normed, v_s, cross_maps=None):  # c: con
     #     RESOLUTIONS[q_c.shape[2]] = 0
     # print(RESOLUTIONS)
     assert cross_maps is not None and q_c.shape[2] in cross_maps
+    # cross_map = cross_maps[q_c.shape[2]]
+    # mean = F.scaled_dot_product_attention(q_c, k_s, v_s)  # Use scaled_dot_product_attention for efficiency
+    # std = (F.scaled_dot_product_attention(q_c, k_s, v_s.square()) - mean.square()).relu().sqrt()
+    mean = scaled_dot_product_attention(q_c, k_s, v_s, cross_maps=cross_maps)  # Use scaled_dot_product_attention for efficiency
+    std = (scaled_dot_product_attention(q_c, k_s, v_s.square(), cross_maps=cross_maps) - mean.square()).relu().sqrt()
+    
+    return mean, std
+
+
+def appearance_mean_std_multiple(q_c_normed, k_s_normed, v_s, cross_maps=None):  # c: content, s: style, cross_maps: {"4096": cross image attention [4096, 4096], "1024": cross image attention [1024, 1024]}
+    q_c = q_c_normed  # q_c and k_s must be projected from normalized features
+    k_s = k_s_normed
+    L = cross_maps[4096].shape[1] // 4096
+    v_matrix = []
+    k_matrix = []
+    for i in range(L):
+        v_matrix.append(v_s[f"{i}"])
+        k_matrix.append(k_s[f"{i}"])
+    v_s = torch.concatenate(v_matrix, dim=2)
+    # print(v_s[0, 0, :10, 0])
+    k_s = torch.concatenate(k_matrix, dim=2)
+    # v_s = v_s.view(1, v_s.shape[1], v_s.shape[0]*v_s.shape[2], v_s.shape[3])
+    # k_s = k_s.view(1, k_s.shape[1], k_s.shape[0]*k_s.shape[2], k_s.shape[3])
+    # print(v_s[0, 0, :10, 0]) same as above
+    
+    # print(v_s.shape)
+    # print(q_c.shape)
+    # assert cross_maps is not None and q_c.shape[2] in cross_maps
     # cross_map = cross_maps[q_c.shape[2]]
     # mean = F.scaled_dot_product_attention(q_c, k_s, v_s)  # Use scaled_dot_product_attention for efficiency
     # std = (F.scaled_dot_product_attention(q_c, k_s, v_s.square()) - mean.square()).relu().sqrt()
@@ -106,6 +135,30 @@ def appearance_transfer(features, q_normed, k_normed, batch_order, v=None, resha
     
     mean_cond, std_cond = appearance_mean_std(
         q_normed_dict["cond"], k_normed_dict["appearance_cond"], v_dict["appearance_cond"], cross_maps=cross_maps
+    )
+
+    if reshape_fn is not None:
+        mean_cond = reshape_fn(mean_cond)
+        std_cond = reshape_fn(std_cond)
+
+    features_dict["cond"] = std_cond * normalize(features_dict["cond"], dim=-2) + mean_cond
+    
+    features = batch_dict_to_tensor(features_dict, batch_order)
+    return features
+
+
+def appearance_transfer_multiple(features, q_normed, k_normed, batch_order, v=None, reshape_fn=None, cross_maps=None):
+    assert features.shape[0] % len(batch_order) == 0
+
+    features_dict = batch_tensor_to_dict(features, batch_order)
+    q_normed_dict = batch_tensor_to_dict(q_normed, batch_order)
+    k_normed_dict = batch_tensor_to_dict(k_normed, batch_order)
+    v_dict = features_dict
+    if v is not None:
+        v_dict = batch_tensor_to_dict(v, batch_order)
+    
+    mean_cond, std_cond = appearance_mean_std_multiple(
+        q_normed_dict["cond"], k_normed_dict, v_dict, cross_maps=cross_maps
     )
 
     if reshape_fn is not None:
