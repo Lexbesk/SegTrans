@@ -1,91 +1,55 @@
-# Ctrl-X: Controlling Structure and Appearance for Text-To-Image Generation Without Guidance (NeurIPS 2024)
+# SegTrans: Enabling Multi-Object Appearance Transfer
 
-<a href="https://arxiv.org/abs/2406.07540"><img src="https://img.shields.io/badge/arXiv-Paper-red"></a> 
-<a href="https://genforce.github.io/ctrl-x"><img src="https://img.shields.io/badge/Project-Page-yellow"></a>
-[![GitHub](https://img.shields.io/github/stars/genforce/ctrl-x?style=social)](https://github.com/genforce/ctrl-x)
+This repo builds upon [Ctrl-x](https://github.com/genforce/ctrl-x), a method for training-free and guidance-free appearance and structure control based on diffusion models. We observed that when multiple objects that contain similar parts appear at the same time in the appearance image and structure image, the appearance are mixed together in the output image. To accurately transfer the appearance of each object in this scenario, we propose SegTrans which utilizes SAM2 to find the correspondence between areas of images thereby seperating objects. 
 
-[Kuan Heng Lin](https://kuanhenglin.github.io)<sup>1*</sup>, [Sicheng Mo](https://sichengmo.github.io/)<sup>1*</sup>, [Ben Klingher](https://bklingher.github.io)<sup>1</sup>, [Fangzhou Mu](https://pages.cs.wisc.edu/~fmu/)<sup>2</sup>, [Bolei Zhou](https://boleizhou.github.io/)<sup>1</sup> <br>
-<sup>1</sup>UCLA&emsp;<sup>2</sup>NVIDIA <br>
-<sup>*</sup>Equal contribution <br>
+## Single appearance image with multiple objects
+![Ctrl-X teaser figure](docs/assets/seg1.png)
 
-![Ctrl-X teaser figure](docs/assets/teaser_github.jpg)
+## Multiple appearance images
+Inspired by the idea of using segmentation to assist appearance transfer, we extend our method to enable multiple appearance images where each one of them provide the appearance of a certain object (or objects). This way, it is much easier to create interesting image using this method since one can put different objects that never appear to be together in a same image, interacting with each other, using just a sketch or some sort of structure image as control. 
+
+![Ctrl-X teaser figure](docs/assets/seg2.png)
 
 ## Getting started
 
 ### Environment setup
 
-Our code is built on top of [`diffusers v0.28.0`](https://github.com/huggingface/diffusers). To set up the environment, please run the following.
-```
-conda env create -f environment.yaml
-conda activate ctrlx
-```
+Our code is built on top of [`Ctrl-x`]([https://github.com/huggingface/diffusers](https://github.com/genforce/ctrl-x)) and [`SAM2`](https://github.com/facebookresearch/sam2). 
 
-### Running Ctrl-X
+To set up the environment, first clone this repo, then install SAM2 in `SegTrans/`.
+## Installing SAM2
 
-#### Gradio demo
+SAM 2 needs to be installed first before use. The code requires `python>=3.10`, as well as `torch>=2.5.1` and `torchvision>=0.20.1`. Please follow the instructions [here](https://pytorch.org/get-started/locally/) to install both PyTorch and TorchVision dependencies. You can install SAM 2 on a GPU machine using:
 
-We provide a user interface for testing our method. Running the following command starts the demo.
 ```bash
-python app_ctrlx.py
+git clone https://github.com/facebookresearch/sam2.git && cd sam2
+
+pip install -e .
 ```
+Download checkpoints by running:
 
-#### Script
-
-We also provide a script for running our method. This is equivalent to the Gradio demo.
 ```bash
-python run_ctrlx.py \
-    --structure_image assets/images/horse__point_cloud.jpg \
-    --appearance_image assets/images/horse.jpg \
-    --prompt "a photo of a horse standing on grass" \
-    --structure_prompt "a 3D point cloud of a horse"
+cd checkpoints && \
+./download_ckpts.sh && \
+cd ..
 ```
-If `appearance_image` is not provided, then Ctrl-X does *structure-only* control. If `structure_image` is not provided, then Ctrl-X does *appearance-only* control.
+For installation problems, please visit [`SAM2`](https://github.com/facebookresearch/sam2) for more details.
 
-#### Optional arguments
+## Set up environment for ctrl-x
 
-There are three optional arguments for both `app_ctrlx.py` and `run_ctrlx.py`:
-- `model_offload` (flag): If enabled, offloads each component of both the base model and refiner to the CPU when not in use, reducing memory usage while slightly increasing inference time.
-    - To use `model_offload`, [`accelerate`](https://github.com/huggingface/accelerate) must be installed. This must be done manually with `pip install accelerate` as `environment.yaml` does *not* have `accelerate` listed.
-- `sequential_offload` (flag): If enabled, offloads each layer of both the base model and refiner to the CPU when not in use, *significantly* reducing memory usage while *massively* increasing inference time.
-    - Similarly, `accelerate` must be installed to use `sequential_offload`.
-    - If both `model_offload` and `sequential_offload` are enabled, then our code defaults to `sequential_offload`.
-- `disable_refiner` (flag): If enabled, disables the refiner (and does not load it), reducing memory usage.
-- `model` (`str`): When provided a `safetensor` checkpoint path, loads the checkpoint for the base model.
-
-Approximate GPU VRAM usage for the Gradio demo and script (structure *and* appearance control) on a single NVIDIA RTX A6000 is as follows.
-
-| Flags                                    | Inference time (s) | GPU VRAM usage (GiB) |
-| ---------------------------------------- | ------------------ | -------------------- |
-| None                                     | 28.8               | 18.8                 |
-| `model_offload`                          | 38.3               | 12.6                 |
-| `sequential_offload`                     | 169.3              | 3.8                  |
-| `disable_refiner`                        | 25.5               | 14.5                 |
-| `model_offload` + `disable_refiner`      | 31.7               | 7.4                  |
-| `sequential_offload` + `disable_refiner` | 151.4              | 3.8                  |
-
-Here, VRAM usage is obtained via `torch.cuda.max_memory_reserved()`, which is the closest option in PyTorch to `nvidia-smi` numbers but is probably still an underestimation. You can obtain these numbers on your own hardware by adding the `benchmark` flag for `run_ctrlx.py`.
-
-Have fun playing around with Ctrl-X! :D
-
-## Future plans (a.k.a. TODOs)
-
-- [ ] Add support for arbitrary schedulers besides DDIM, not necessarily with self-recurrence (if not possible).
-- [ ] Add support for DiTs, including SD3 and FLUX.1.
-- [ ] Add support for video generation models, including CogVideoX and Mochi 1.
-
-## Contact
-
-For any questions, thoughts, discussions, and any other things you want to reach out for, please contact [Jordan Lin](https://kuanhenglin.github.io) (kuanhenglin@ucla.edu).
-
-## Reference
-
-If you use our code in your research, please cite the following work.
-
-```bibtex
-@inproceedings{lin2024ctrlx,
-    author = {Lin, {Kuan Heng} and Mo, Sicheng and Klingher, Ben and Mu, Fangzhou and Zhou, Bolei},
-    booktitle = {Advances in Neural Information Processing Systems},
-    title = {Ctrl-X: Controlling Structure and Appearance for Text-To-Image Generation Without Guidance},
-    year = {2024}
-}
+To set up the environment, please run the following.
 ```
+pip install diffusers==0.28.0
+```
+
+### Running SegTrans
+
+Use run.sh to run the case with just one appearance image
+```
+bash scripts/run.sh
+```
+Use run_multiple.sh for multiple appearance images
+```
+bash scripts/run_multiple.sh
+```
+
